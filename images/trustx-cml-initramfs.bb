@@ -23,6 +23,8 @@ PACKAGE_INSTALL = "\
 	btrfs-tools \
 	${ROOTFS_BOOTSTRAP_INSTALL} \
 	cml-boot \
+	pcsc-tools \
+	socat \
 "
 
 PACKAGE_INSTALL += "\
