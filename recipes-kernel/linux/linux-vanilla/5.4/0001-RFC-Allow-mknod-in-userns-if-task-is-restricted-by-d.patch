@@ -1,0 +1,111 @@
+From ebbbf00b05d6ef45f9844265414e35cf071e73b0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michael=20Wei=C3=9F?= <michael.weiss@aisec.fraunhofer.de>
+Date: Fri, 23 Sep 2022 09:16:54 +0200
+Subject: [PATCH] [RFC] Allow mknod in userns if task is restricted by devcg
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+backport for 5.4 (cgroup v1 only)
+
+If a container manager restricts its unprivileged (user namespaced)
+childs by a device cgroup, it is not necessary to deny mknod anymore.
+Thus, user space applications may map devices on different locations
+in the file system by using mknod inside the container. This allows,
+e.g., to run virsh for VMs inside an unprivileged container.
+
+We achieve this by checking CAP_MKNOD for its current user namespace
+ns_capable() instead of the global CAP_MKNOD by capable() in the
+case of active device cgroup restriction of the current task.
+
+Signed-off-by: Michael Weiß <michael.weiss@aisec.fraunhofer.de>
+---
+ fs/namei.c                    | 17 +++++++++++++++--
+ include/linux/device_cgroup.h | 11 +++++++++++
+ security/device_cgroup.c      |  9 +++++++++
+ 3 files changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 5b5759d70822..7b34223d8b6f 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -3695,8 +3695,21 @@ int vfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
+ 	if (error)
+ 		return error;
+ 
+-	if ((S_ISCHR(mode) || S_ISBLK(mode)) && !capable(CAP_MKNOD))
+-		return -EPERM;
++	/*
++	 * In case of a device cgroup restirction allow mknod in user
++	 * namespace. Otherwise just check global capability; thus,
++	 * mknod is also disabled for user namespace other than the
++	 * initial one.
++	 */
++	if (S_ISCHR(mode) || S_ISBLK(mode)) {
++		if (devcgroup_task_is_restricted(current)) {
++			if (!ns_capable(current_user_ns(), CAP_MKNOD)) {
++				return -EPERM;
++			}
++		} else if (!capable(CAP_MKNOD)) {
++			return -EPERM;
++		}
++	}
+ 
+ 	if (!dir->i_op->mknod)
+ 		return -EPERM;
+diff --git a/include/linux/device_cgroup.h b/include/linux/device_cgroup.h
+index 8557efe096dc..16aa00e6661e 100644
+--- a/include/linux/device_cgroup.h
++++ b/include/linux/device_cgroup.h
+@@ -14,10 +14,13 @@
+ #ifdef CONFIG_CGROUP_DEVICE
+ extern int __devcgroup_check_permission(short type, u32 major, u32 minor,
+ 					short access);
++extern bool __devcgroup_task_is_restricted(struct task_struct *task);
+ #else
+ static inline int __devcgroup_check_permission(short type, u32 major, u32 minor,
+ 					       short access)
+ { return 0; }
++static inline bool __devcgroup_task_is_restricted(struct task_struct *task)
++{ return false; }
+ #endif
+ 
+ #if defined(CONFIG_CGROUP_DEVICE) || defined(CONFIG_CGROUP_BPF)
+@@ -71,9 +74,17 @@ static inline int devcgroup_inode_mknod(int mode, dev_t dev)
+ 					  DEVCG_ACC_MKNOD);
+ }
+ 
++static inline bool devcgroup_task_is_restricted(struct task_struct *task)
++{
++	// no macro to check if bpf style device cgroups are enabled in 5.4
++	// thus only support v1 cgroup device subsystem
++	return __devcgroup_task_is_restricted(task);
++}
+ #else
+ static inline int devcgroup_inode_permission(struct inode *inode, int mask)
+ { return 0; }
+ static inline int devcgroup_inode_mknod(int mode, dev_t dev)
+ { return 0; }
++static inline bool devcgroup_task_is_restricted(struct task_struct *task)
++{ return false; }
+ #endif
+diff --git a/security/device_cgroup.c b/security/device_cgroup.c
+index 5d7bb91c6487..98f30489b9f8 100644
+--- a/security/device_cgroup.c
++++ b/security/device_cgroup.c
+@@ -825,3 +825,12 @@ int __devcgroup_check_permission(short type, u32 major, u32 minor,
+ 
+ 	return 0;
+ }
++
++bool __devcgroup_task_is_restricted(struct task_struct *task)
++{
++	struct dev_cgroup *dev_cgroup = task_devcgroup(task);
++	if (dev_cgroup->behavior == DEVCG_DEFAULT_DENY)
++		return true;
++
++	return false;
++}
+-- 
+2.30.2
+
