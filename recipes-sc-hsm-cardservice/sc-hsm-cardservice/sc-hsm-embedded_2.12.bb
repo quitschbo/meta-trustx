@@ -22,7 +22,7 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=55b854a477953696452f698a3af5de1c"
 SRCREV = "ee59f6c6c9e1dd43a35a413c57a8325209cb4dc6"
 TAG := "${PV}"
 #SRC_URI = " git://github.com/CardContact/sc-hsm-embedded.git;protocol=https;tag=V${TAG};branch=master"
-SRC_URI = " git://github.com/CardContact/sc-hsm-embedded.git;protocol=https;branch=master"
+SRC_URI = "git://github.com/CardContact/sc-hsm-embedded.git;protocol=https;branch=master"
 PV = "${TAG}+git${SRCPV}"
 
 SRC_URI:append = " \
